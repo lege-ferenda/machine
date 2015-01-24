@@ -1,0 +1,162 @@
+---
+title: "Machine Learning Project"
+author: "D.F"
+date: "Saturday, January 24, 2015"
+output: html_document
+---
+
+1)Project Objective:
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement – a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. 
+
+In this project,the goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants who performed correctly the activities in order to build a machine learning model for prediction purposes.
+
+1) Downloading and Loading the Datasets 
+
+```{r, warning=FALSE}
+if(!file.exists("project-ml")) {dir.create("project-ml")}
+fileurl1 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+fileurl2 <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+download.file(fileurl1, destfile = "./project-ml/pml-training.csv", method="curl")
+download.file(fileurl2, destfile = "./project-ml/pml-testing.csv", method="curl")
+
+## load the datasets in R
+trainingSet <- read.csv("./project-ml/pml-training.csv")
+testingSet <- read.csv("./project-ml/pml-testing.csv")
+
+dim(trainingSet)
+dim(testingSet)
+
+```
+We load from the beggining the required libraries:
+```{r, warning=FALSE}
+library(caret); library(ggplot2); library(corrplot); library(randomForest)
+```
+
+So the training set has 160 variables (features) that we can use to train our model.
+In order to avoid overfitting the model, or include unnecessary features we will 
+perform a two-step dimension reduction of our dataset.
+
+Fisrt, we leave out variables that we can safely assume that are irrelevant with
+the response variable (classe) because they have no values at all (all Nas).
+In order to accomplish that we use a function to calculate to percentage of Nas
+in every variable and we exclude all variables that have a percentage = 1 (100% Nas).
+```{r}
+propmiss <- function(dataframe) {
+        m <- sapply(dataframe, function(x) {
+                data.frame(
+                        nmiss=sum(is.na(x)), 
+                        n=length(x), 
+                        propmiss=sum(is.na(x))/length(x)
+                )
+        })
+        d <- data.frame(t(m))
+        d <- sapply(d, unlist)
+        d <- as.data.frame(d)
+        d$variable <- row.names(d)
+        row.names(d) <- NULL
+        d <- cbind(d[ncol(d)],d[-ncol(d)])
+        return(d[order(d$propmiss), ])
+}
+```
+
+We pass the testing set as an argument to the propmiss function, we spot that
+variables and then we take them out also from the training set.
+```{r}
+nacol <- propmiss(testingSet)
+
+emptyvars <- nacol[which(nacol$propmiss == 1),]
+emptyvarsfinal <- emptyvars[1]
+
+trainSet <- trainingSet[!(names(trainingSet) %in% emptyvarsfinal$variable)] ##done
+```
+After that our training Set dimensios are:
+```{r}
+dim(trainSet)
+```
+we also have to exclube some more: user_name", "new_window", "X", "raw_timestamp_part_1", 
+"raw_timestamp_part_2","cvtd_timestamp", "num_window".
+These variables measures time so we assume that they do not hold much information to use them
+in our model.
+
+Also, a near zero variance will show as that the variable "new_window" has not any
+variability.
+
+```{r}
+nsv <- nearZeroVar(trainSet, saveMetrics = TRUE)
+```
+So we exlude all of them:
+```{r}
+excludeMe <- c("user_name", "new_window", "X", "raw_timestamp_part_1", "raw_timestamp_part_2",
+               "cvtd_timestamp", "num_window")
+trainSet <- trainSet[!(names(trainSet) %in% excludeMe)]
+```
+As a second step,we create a correlation matrix to exclude variables that are highly correlated, 
+id est corellation > 0.9
+```{r}
+correl <- cor(na.omit(trainSet[sapply(trainSet, is.numeric)]))
+```
+We plot the matrix:
+```{r}
+corrplot(correl, order = "hclust") #visualize the matrix, clustering features by correlation index.
+```
+Now we are able to find the higly correlated variables so we can remove them from the dataset
+```{r}
+excludeMe2 <- findCorrelation(correl, cutoff = .90, verbose = FALSE)
+
+print(excludeMe2) ## A vector of indices denoting the columns to remove
+
+##removing the correl variables
+newTrainSet <- trainSet[c(-10,-1, -9, -8, -19, -46, - 31)]
+```
+2. Splitting the Training dataset 
+Now that we have already "cleaned" our dataset, it will be splitted in to parts.
+One part (70%) it will be used to train the model and the remaining part (30%) as
+a test set to perform cross validation.
+
+```{r}
+set.seed(1236)
+inTrain <- createDataPartition( y = newTrainSet$classe,
+                                p = 0.7,list = FALSE)
+Train <- newTrainSet[inTrain,]
+Test <- newTrainSet[-inTrain,]
+```
+
+With the help of randomForest package we now build a model as follows:
+```{r}
+set.seed(1236)
+
+fit <- randomForest(classe ~., data = Train, ntree = 100,importance = T)
+
+print(fit)
+```
+
+3. Model Accuracy
+
+As we can see in the printed results, our model has an Out Of Bag error rate 0.7%.
+
+The Out of Bag error is a method for cross validation using the same 
+dataset that trains the model , keeping each time a proportion (1/3) out of the
+training sample, we can safely assume that we have an unbiased estimation of the
+accuracy of the model which is more than 99%. 
+
+For practices purposes, we test it to the testset that we have created
+from the training dataset to confirm the accuracy of the model:
+```{r}
+prediction <- predict(fit, Test, type ="response")
+
+##table the results
+
+tab <- table(observed = Test$classe , predicted = prediction)
+print(tab)
+
+## overall accuracy of the model in the Test set
+sum(diag(tab))/sum(tab)
+
+```
+Finally, we use the model to predict the original test set:
+```{r}
+prediction2 <- predict(fit, testingSet, type ="response")
+print(prediction2) ## the submission results was 20/20
+```
+
+
